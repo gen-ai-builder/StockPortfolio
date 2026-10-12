@@ -50,12 +50,15 @@ portfolio results from bad data.
 | pandas | CSV/Excel tables, validation, time series, grouping, and calculations. |
 | yfinance | Retrieves daily market prices and corporate actions from Yahoo Finance. |
 | Plotly | Renders the current-allocation donut chart. |
+| OpenAI Python SDK | Optional portfolio Q&A through the Responses API. |
 | openpyxl | Enables reading Excel `.xlsx` transaction files through pandas. |
 | JSON and local files | Store dashboard preferences and the bundled transaction sample. |
 | PowerShell | Used for local command-line reproduction and validation in this work. |
 
 The project does not use a database. The dashboard and calculations run in a
 single Python app process; the transaction data is read from a file or upload.
+When chat is enabled, the app sends a compact calculated portfolio snapshot and
+recent conversation turns to the configured OpenAI API account.
 
 ## 4. How the design appears in the code
 
@@ -74,6 +77,9 @@ The main application is [app.py](app.py). Its major stages include:
   dividends received.
 - **Presentation:** the remainder of the Streamlit script builds the controls,
   charts, tax tables, and CSV downloads.
+- **Chat:** an optional Streamlit chat panel supplies current holdings, gain
+  summaries, tax assumptions, and trailing-year ticker price ranges to the
+  OpenAI Responses API. It does not send the original transaction file.
 
 The transaction schema and how to run the project are in [README.md](README.md).
 The product flow, calculation assumptions, error behavior, limitations, and
@@ -141,6 +147,9 @@ Useful follow-up engineering work would be to add automated tests for split
 adjustments (no future splits, one split, and multiple splits), then expand
 coverage to transaction validation, FIFO matching, and historical valuation.
 The broader product roadmap is recorded in [DESIGN.md](DESIGN.md).
+
+To enable portfolio chat, configure `OPENAI_API_KEY` as described in
+[README.md](README.md). The chat model can be changed with `OPENAI_MODEL`.
 
 ## 9. Lessons to carry forward
 

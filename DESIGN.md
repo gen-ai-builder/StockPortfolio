@@ -14,6 +14,7 @@ The app is intended for personal monitoring and planning. It is not a brokerage 
 - Identify realized and open gains as short-term or long-term under the configured U.S. federal estimate.
 - Make assumptions visible and allow the user to adjust the estimate rates.
 - Allow the user to export the key tables and save dashboard preferences locally.
+- Offer optional LLM-powered chat grounded in the current portfolio, tax estimates, and trailing 52-week price ranges.
 
 ## 3. Intended users and use cases
 
@@ -25,6 +26,7 @@ The primary user is an individual investor tracking a portfolio from a transacti
 4. Compare an indexed portfolio history with a selected market benchmark.
 5. Review realized gains by tax year and holding period, and estimate tax under editable rates.
 6. Export holdings, transactions, or realized gain summaries as CSV.
+7. Ask natural-language questions about holdings, gains, the dashboard's tax estimate, or a held ticker's 52-week high and low.
 
 ## 4. Application structure
 
@@ -39,6 +41,7 @@ The application is a single-page Streamlit app (`app.py`) with the following are
 | Allocation and stock detail | Show a holding allocation donut and selected ticker price history with transaction markers. |
 | Tax view | Show realized gains by tax year and holding period, open tax lots, and an estimated tax impact. |
 | Holdings and exports | Show current positions and download CSV reports. |
+| Portfolio chat | Optionally answer portfolio questions using a calculated snapshot and recent chat turns through the OpenAI Responses API. |
 
 ## 5. Transaction input
 
@@ -78,6 +81,10 @@ flowchart TD
     L --> O[Dashboard and CSV reports]
     M --> O
     N --> O
+    L --> R[Portfolio context and trailing 52-week ticker ranges]
+    R --> S[Optional OpenAI Responses API chat]
+    T[User question and recent chat turns] --> S
+    S --> U[Chat answer in dashboard]
     P[Local saved preferences] --> O
     O --> Q[Optional CSV downloads]
 ```
@@ -94,6 +101,7 @@ sequenceDiagram
     participant Market as yfinance cache
     participant Yahoo as Yahoo Finance
     participant Calc as Portfolio calculations
+    participant Chat as Optional OpenAI chat
     participant Export as CSV exports
 
     User->>UI: Upload transactions or use sample
@@ -106,6 +114,9 @@ sequenceDiagram
     Market-->>Calc: Cached market data
     Calc->>Calc: Adjust shares, match FIFO lots, value history
     Calc-->>UI: Holdings, charts, gains, estimates
+    User->>UI: Ask a portfolio question
+    UI->>Chat: Question, recent turns, calculated portfolio snapshot
+    Chat-->>UI: Answer grounded in supplied data
     User->>Export: Request CSV download
     Export-->>User: Download report
 ```
@@ -119,9 +130,13 @@ sequenceDiagram
 7. Build historical value from daily closing prices, adjusted historical share counts, and accumulated dividends. The chart assumes dividends remain in cash.
 8. Build the benchmark comparison by rebasing the portfolio value and benchmark price series to 100 over the selected period.
 9. Calculate the configurable tax estimate from realized gains grouped by tax year and term; estimate hypothetical tax on open gains as if sold at current prices.
-10. Offer CSV downloads and optionally persist dashboard preferences in a local JSON file.
+10. Calculate trailing 52-week high and low from available daily closes for held tickers.
+11. If configured, send the user's question, recent chat turns, and a compact calculated portfolio snapshot to the OpenAI Responses API; display the generated answer in the dashboard.
+12. Offer CSV downloads and optionally persist dashboard preferences in a local JSON file.
 
 Market results are cached for 15 minutes. The benchmark comparison is an indexed view rather than a cash-flow-adjusted return calculation.
+
+The market-data request includes at least the trailing year of prices so the dashboard can answer 52-week range questions even when the user's earliest transaction is more recent. Ranges are calculated from available Yahoo Finance daily closes and are not guaranteed to represent live intraday quotes.
 
 ## 7. Tax estimate behavior
 
@@ -145,6 +160,9 @@ flowchart LR
         Lots[FIFO and split-adjusted tax lots]
         History[Historical valuation and dividend calculations]
         Views[Charts, metrics, and tax tables]
+        ChatUI[Optional portfolio chat UI]
+        ChatContext[Calculated portfolio snapshot and price ranges]
+        OpenAI[OpenAI Responses API]
         Reports[CSV report generation]
         Prefs[Local preferences JSON]
 
@@ -156,17 +174,20 @@ flowchart LR
         Lots --> Views
         History --> Views
         Views --> Reports
+        Views --> ChatContext --> ChatUI
+        ChatUI --> OpenAI
         Prefs --> UI
         UI --> Prefs
     end
 
     Transactions[Bundled CSV or uploaded file] --> Loader
     Pricing <--> Yahoo[Yahoo Finance]
+    ChatUI <--> Browser[Streamlit browser session]
     Views --> Browser[Streamlit browser session]
     Reports --> Browser
 ```
 
-The app is a single Python process. Streamlit handles page state and rendering; pandas handles tabular data; yfinance retrieves market data; Plotly renders the allocation donut; and a local JSON file stores preferences. The app does not use a database or send transactions to Yahoo Finance.
+The app is a single Python process. Streamlit handles page state and rendering; pandas handles tabular data; yfinance retrieves market data; Plotly renders the allocation donut; and a local JSON file stores preferences. The app does not use a database or send transactions to Yahoo Finance. When optional chat is enabled, it sends the user's question, recent chat turns, and a compact summary of calculated holdings, gains, tax assumptions, and ticker price ranges to the configured OpenAI API account. It does not send the original uploaded transaction file. Chat is unavailable until `OPENAI_API_KEY` is configured; `OPENAI_MODEL` can select a different model supported by the account. API use may incur charges.
 
 Preferences (benchmark, chart period, and tax rates) are saved to `preferences.json` in the app directory when the user selects **Save dashboard preferences**. That file is excluded from Git by the app’s `.gitignore`.
 
@@ -184,6 +205,8 @@ CSV exports include:
 - A sale that exceeds available shares produces a ticker and sale-date error.
 - Missing Yahoo Finance price history identifies the affected ticker symbols.
 - Price results are cached; users can refresh the Streamlit app to request updated data after the cache expires or is cleared.
+- If `OPENAI_API_KEY` is missing, chat remains disabled and the app displays setup guidance.
+- OpenAI API errors are shown in the chat panel; check the API key, account access, network connection, and configured model.
 
 ## 10. Current limitations
 
@@ -195,6 +218,8 @@ CSV exports include:
 - The app assumes one transaction currency and currently formats amounts in dollars.
 - Tax assumptions and calculations are not filing-grade and do not cover all U.S. federal or state tax rules.
 - Preferences are local to the app directory and computer; they are not synced across devices.
+- LLM responses can be inaccurate. Chat uses the supplied portfolio snapshot and is informational; tax responses describe the dashboard's simplified estimate and are not tax advice.
+- Chat sends portfolio summaries and questions to the configured OpenAI API provider, so users should enable it only for data they are comfortable sharing with that provider.
 
 ## 11. Roadmap
 
@@ -205,6 +230,7 @@ CSV exports include:
 - Add downloadable open tax lots and a richer realized-sale detail export.
 - Add cash deposits and withdrawals so the app can calculate time-weighted or money-weighted returns.
 - Improve upload validation with a downloadable rejected-row report and an option to map alternate broker column names.
+- Add automated evaluation of chat answers for portfolio grounding, tax-assumption accuracy, and missing-data behavior.
 
 ### Later
 

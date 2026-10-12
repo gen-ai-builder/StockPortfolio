@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import date
 from io import BytesIO
 from pathlib import Path
@@ -226,6 +227,43 @@ def build_history(
     return history
 
 
+def get_openai_api_key() -> str | None:
+    """Read an API key from Streamlit secrets or the process environment."""
+    try:
+        return st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+    except (FileNotFoundError, KeyError):
+        return os.getenv("OPENAI_API_KEY")
+
+
+def portfolio_chat_reply(question: str, context: dict, messages: list[dict]) -> str:
+    """Ask the configured LLM to answer using the current portfolio snapshot."""
+    from openai import OpenAI
+
+    client = OpenAI(api_key=get_openai_api_key())
+    conversation = [
+        {"role": message["role"], "content": message["content"]}
+        for message in messages[-10:]
+    ]
+    conversation.append({"role": "user", "content": question})
+    response = client.responses.create(
+        model=os.getenv("OPENAI_MODEL", "gpt-5.4-mini"),
+        instructions=(
+            "You are a portfolio dashboard assistant. Answer using the supplied current "
+            "portfolio snapshot and recent conversation. For prices and 52-week ranges, "
+            "use only the supplied market data and mention its as-of date. If data is "
+            "missing, say so. For tax questions, explain the dashboard's assumptions and "
+            "that estimates are not tax advice; do not claim to determine the user's tax "
+            "liability or invent tax rules. Give concise, clear answers."
+        ),
+        input=[
+            {"role": "developer", "content": "Current portfolio snapshot (JSON):\n" + json.dumps(context)},
+            *conversation,
+        ],
+        max_output_tokens=700,
+    )
+    return response.output_text
+
+
 preferences = load_preferences()
 
 st.title("Portfolio overview")
@@ -253,7 +291,7 @@ st.success(f"Loaded {len(transactions)} validated transactions across {transacti
 with st.expander("Review validated transactions"):
     st.dataframe(transactions, use_container_width=True, hide_index=True)
 
-start_date = transactions["date"].min().date()
+start_date = min(transactions["date"].min().date(), date.today() - pd.Timedelta(days=366))
 asset_tickers = tuple(sorted(transactions["ticker"].unique()))
 market_tickers = tuple(sorted(set(asset_tickers + (benchmark,))))
 with st.spinner("Loading prices and corporate actions from Yahoo Finance..."):
@@ -404,6 +442,62 @@ st.dataframe(
         "Return": st.column_config.NumberColumn(format="%.2f%%"),
     },
 )
+
+st.subheader("Ask about your portfolio")
+st.caption(
+    "Ask about holdings, gains, the dashboard's tax estimates, or a ticker's 52-week "
+    "high/low. Your question and a summary of portfolio holdings and tax figures are "
+    "sent to the configured OpenAI API. Market ranges use available Yahoo Finance daily closes."
+)
+api_key = get_openai_api_key()
+if not api_key:
+    st.info("To enable chat, set OPENAI_API_KEY in your environment or Streamlit secrets, then restart the app.")
+else:
+    chat_context = {
+        "as_of": str(prices.index[-1].date()),
+        "market_data_source": "Yahoo Finance daily Close, split-adjusted",
+        "portfolio_market_value": round(portfolio_value, 2),
+        "open_cost_basis": round(cost_basis, 2),
+        "unrealized_gain_loss": round(unrealized, 2),
+        "dividends_received": round(dividend_income, 2),
+        "open_gain_tax_estimate_if_sold_today": round(float(open_tax), 2),
+        "tax_assumptions": {
+            "lot_method": "FIFO",
+            "short_term_rate_percent": round(short_rate * 100, 2),
+            "long_term_rate_percent": round(long_rate * 100, 2),
+            "limitations": "Simplified federal estimate; excludes cross-term loss netting, carryovers, state tax, NIIT, fees, wash sales, and other tax rules.",
+        },
+        "holdings": holdings.round(2).to_dict(orient="records"),
+        "realized_gains_by_year_and_term": (
+            realized_sales.groupby(["Tax year", "Term"])["Gain / loss"].sum().round(2).reset_index().to_dict(orient="records")
+            if not realized_sales.empty else []
+        ),
+        "ticker_52_week_ranges": {
+            ticker: {
+                "low": round(float(prices[ticker].loc[prices.index >= prices.index[-1] - pd.Timedelta(days=365)].min()), 2),
+                "high": round(float(prices[ticker].loc[prices.index >= prices.index[-1] - pd.Timedelta(days=365)].max()), 2),
+                "available_days": int(prices[ticker].loc[prices.index >= prices.index[-1] - pd.Timedelta(days=365)].count()),
+            }
+            for ticker in asset_tickers
+        },
+    }
+    if "portfolio_chat" not in st.session_state:
+        st.session_state.portfolio_chat = []
+    for chat_message in st.session_state.portfolio_chat:
+        with st.chat_message(chat_message["role"]):
+            st.markdown(chat_message["content"])
+    if question := st.chat_input("Ask about holdings, taxes, or 52-week ranges", max_chars=1000):
+        st.session_state.portfolio_chat.append({"role": "user", "content": question})
+        with st.chat_message("user"):
+            st.markdown(question)
+        with st.chat_message("assistant"):
+            with st.spinner("Reviewing your portfolio..."):
+                try:
+                    answer = portfolio_chat_reply(question, chat_context, st.session_state.portfolio_chat[:-1])
+                    st.markdown(answer)
+                    st.session_state.portfolio_chat.append({"role": "assistant", "content": answer})
+                except Exception as error:
+                    st.error(f"The portfolio assistant could not respond: {error}")
 
 with st.expander("Transaction history"):
     st.dataframe(transactions, use_container_width=True, hide_index=True)

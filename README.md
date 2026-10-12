@@ -18,6 +18,16 @@ python -m streamlit run app.py
 
 The repository does not include personal transaction data. Upload a CSV or Excel workbook using the sidebar to get started. If a local `transactions.csv` is present beside the app, it is used until you upload another file. Choose a benchmark and set assumed short-term and long-term federal rates in the sidebar. Valid uploads are previewed before price history loads, and invalid data reports the affected spreadsheet rows. The app includes portfolio and individual ticker charts, a benchmark comparison, allocation chart, open tax-lot view, and CSV downloads for holdings, transactions, and realized gains. Use **Save dashboard preferences** to store the benchmark, chart period, and tax rate assumptions locally on this computer.
 
+## Portfolio chat
+
+The optional chat uses the OpenAI Responses API. Set `OPENAI_API_KEY` in your shell environment or in `.streamlit/secrets.toml` (which is ignored by Git):
+
+```toml
+OPENAI_API_KEY = "your-api-key"
+```
+
+The default model is `gpt-5.4-mini`; set `OPENAI_MODEL` to use another model available to your API account. Chat sends the user's question, recent chat messages, and a compact summary of holdings, tax estimates, and market ranges to OpenAI. Do not enable it with portfolio data you do not want to send to the configured API provider. Answers use the app's Yahoo Finance price data and simplified FIFO tax estimates; they are not tax advice. Ticker 52-week ranges are calculated from the daily closes available in the trailing year.
+
 ## Transaction format
 
 Required headers (case-insensitive): `ticker`, `date`, `transaction_type`, `quantity`, `price`. Use `BUY` or `SELL`; dates should be Excel-readable dates or ISO format such as `2025-01-31`. Sell quantities cannot exceed the shares held at that time. Only the first sheet of an uploaded Excel workbook is read.
